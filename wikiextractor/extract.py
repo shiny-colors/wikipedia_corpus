@@ -78,6 +78,11 @@ def clean(extractor, text, expand_templates=False, html_safe=True):
     @return: the cleaned text.
     """
 
+    # keep template
+    text = re.sub("{{(C|c)olumns-list\|[0-9]\|", "", text)   # keep columns-list
+    text = re.sub("{{Main\|(.+?)}}", "<main>\\1</main>", text)   # keep main
+    text = re.sub("{{See also\|(.+?)}}", "<also>\\1</also>", text)   # keep also
+
     if expand_templates:
         # expand templates
         # See: http://www.mediawiki.org/wiki/Help:Templates
@@ -85,6 +90,7 @@ def clean(extractor, text, expand_templates=False, html_safe=True):
     else:
         # Drop transclusions (template, parser functions)
         text = dropNested(text, r'{{', r'}}')
+        text = re.sub("^}}", "", text)
 
     # Drop tables
     text = dropNested(text, r'{\|', r'\|}')
@@ -218,6 +224,7 @@ def compact(text, mark_headers=False):
             headers = { k:v for k,v in headers.items() if k <= lev }
             emptySection = True
             continue
+
         # Handle page title
         if line.startswith('++'):
             title = line[2:-2]
@@ -225,12 +232,25 @@ def compact(text, mark_headers=False):
                 if title[-1] not in '!?':
                     title += '.'
                 page.append(title)
+
         # handle indents
         elif line[0] == ':':
-            # page.append(line.lstrip(':*#;'))
-            continue
+            line = line.lstrip(':')
+            line = "<dd>" + line + "</dd>"
+            page.append(line)
+
         # handle lists
-        elif line[0] in '*#;:':
+        elif line[0] == "*":
+            length = len(re.findall("^\*+", line)[0])
+            line = line.lstrip("* ")
+            line = "<ls{}>".format(str(length)) + line + "</ls{}>".format(str(length))
+            page.append(line)
+
+        # handle texts
+        elif line[0] in '\'[':
+            page.append(line)
+
+        elif line[0] in '#;:':
             if Extractor.HtmlFormatting:
                 i = 0
                 for c, n in zip_longest(listLevel, line, fillvalue=''):
@@ -253,30 +273,42 @@ def compact(text, mark_headers=False):
                 n = line[i - 1]  # last list char
                 line = line[i:].strip()
                 if line:  # FIXME: n is '"'
-                    page.append(listItem[n] % line)
+                    try:               
+                        page.append(listItem[n] % line)
+                    except:
+                        page.append("")
             else:
                 continue
+
         elif len(listLevel):
             for c in reversed(listLevel):
                 page.append(listClose[c])
+            if len(line) > 0:
+                page.append(line)
             listLevel = []
 
         # Drop residuals of lists
         elif line[0] in '{|' or line[-1] == '}':
             continue
+
         # Drop irrelevant lines
         elif (line[0] == '(' and line[-1] == ')') or line.strip('.-') == '':
             continue
         elif len(headers):
             if Extractor.keepSections:
                 items = sorted(headers.items())
+                """
                 for (i, v) in items:
+                    print(v)
                     page.append(v)
+                """
             headers.clear()
             page.append(line)  # first line
             emptySection = False
+
         elif not emptySection:
             page.append(line)
+
             # dangerous
             # # Drop preformatted
             # elif line[0] == ' ':
@@ -843,8 +875,9 @@ class Extractor():
 
         text = clean(self, text, expand_templates=expand_templates,
                      html_safe=html_safe)
-
+                     
         text = compact(text, mark_headers=mark_headers)
+        
         return text
 
     def extract(self, out, html_safe=True):
